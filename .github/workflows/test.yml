@@ -64,13 +64,6 @@ jobs:
         sudo apt-get install openresty
         git clone https://github.com/openresty/test-nginx.git test-nginx
 
-    - name: Build lua-cjson
-      run: |
-        git clone https://github.com/openresty/lua-cjson.git
-        cd lua-cjson
-        make
-        sudo PATH=$PATH make install
-
     - name: Setup iptables rule
       run: sudo iptables -A OUTPUT -p tcp --dst 127.0.0.2 --dport 12345 -j DROP
 
