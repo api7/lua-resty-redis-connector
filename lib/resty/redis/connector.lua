@@ -406,6 +406,12 @@ function _M.connect_to_host(self, host)
     if not ok then
         return nil, err
     else
+        -- Check if connection was reused from the pool, and skip AUTH/SELECT if so
+        local count = r:get_reused_times()
+        if count > 0 then
+            return r, nil
+        end
+
         local username = host.username
         local password = host.password
         if password and password ~= "" then
