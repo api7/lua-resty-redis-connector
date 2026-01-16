@@ -40,7 +40,7 @@ local get_master = require("resty.redis.sentinel").get_master
 local get_slaves = require("resty.redis.sentinel").get_slaves
 
 local lrucache = require "resty.lrucache"
-local master_cache = lrucache.new(100)
+local master_cache = lrucache.new(1024)
 
 
 -- A metatable which prevents undefined fields from being created / accessed
@@ -147,7 +147,6 @@ local DEFAULTS = setmetatable({
     sentinels = {},
 
     sentinel_cache_ttl = 10,
-    sentinel_cache_size = 100,
 
     -- Redis proxies typically don't support full Redis capabilities
     connection_is_proxied = false,
@@ -342,7 +341,7 @@ function _M.connect_via_sentinel(self, params)
         master_cache:set(cache_key, {
             host = master.host,
             port = master.port,
-        }, cache_ttl)
+        }, params.sentinel_cache_ttl)
 
         sentnl:set_keepalive()
 
