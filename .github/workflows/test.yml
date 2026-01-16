@@ -37,8 +37,6 @@ jobs:
 
     - name: Install system dependencies
       run: |
-        # Add Redis PPA and install Redis
-        sudo add-apt-repository -y ppa:redislabs/redis
         sudo apt-get update
         sudo apt-get install -y redis-server luarocks lsof cpanminus axel libpcre3-dev
 
