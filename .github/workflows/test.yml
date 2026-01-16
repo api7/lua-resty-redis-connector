@@ -1,0 +1,74 @@
+name: Test
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    env:
+      JOBS: 3
+      NGX_BUILD_JOBS: 3
+      LUAJIT_PREFIX: /opt/luajit21
+      LUAJIT_LIB: /opt/luajit21/lib
+      LUAJIT_INC: /opt/luajit21/include/luajit-2.1
+      LUA_INCLUDE_DIR: /opt/luajit21/include/luajit-2.1
+      OPENRESTY_PREFIX: "/usr/local/openresty"
+      OPENSSL_PREFIX: /opt/ssl
+      OPENSSL_LIB: /opt/ssl/lib
+      OPENSSL_INC: /opt/ssl/include
+      OPENSSL_VER: 1.1.1f
+      LD_LIBRARY_PATH: /opt/luajit21/lib
+      TEST_NGINX_SLEEP: 0.006
+      LUACHECK_VER: 0.21.1
+      NGINX_VERSION: 1.19.9
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Setup cache for downloads
+      uses: actions/cache@v3
+      with:
+        path: download-cache
+        key: ${{ runner.os }}-openssl-${{ env.OPENSSL_VER }}
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y redis-server lsof cpanminus axel libpcre3-dev lua5.1 liblua5.1-0-dev build-essential libncurses5-dev libreadline-dev libssl-dev perl
+        curl -fsSL https://raw.githubusercontent.com/apache/apisix/master/utils/linux-install-luarocks.sh | sh
+
+    - name: Install Lua dependencies
+      run: |
+        sudo luarocks install luacov
+        sudo luarocks install lua-resty-redis
+        sudo luarocks install luacheck ${{ env.LUACHECK_VER }}
+
+    - name: Run luacheck
+      run: luacheck -q .
+
+    - name: Install Test::Nginx
+      run: |
+        sudo cpanm --notest Test::Nginx > build.log 2>&1 || (cat build.log && exit 1)
+
+    - name: Linux Install
+      run: |
+        wget -qO - https://openresty.org/package/pubkey.gpg | sudo apt-key add -
+        sudo apt-get -y install software-properties-common
+        sudo add-apt-repository -y "deb http://openresty.org/package/ubuntu $(lsb_release -sc) main"
+        sudo apt-get update
+        sudo apt-get install openresty
+        git clone https://github.com/openresty/test-nginx.git test-nginx
+
+    - name: Setup iptables rule
+      run: sudo iptables -A OUTPUT -p tcp --dst 127.0.0.2 --dport 12345 -j DROP
+
+    - name: Run tests
+      run: |
+        mkdir -p tmp
+        export PATH=$OPENRESTY_PREFIX/nginx/sbin:$PATH
+        PATH=$PATH TMP_DIR=$PWD/tmp make test_all
