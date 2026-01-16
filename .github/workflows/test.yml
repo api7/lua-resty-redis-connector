@@ -66,6 +66,7 @@ jobs:
 
     - name: Build lua-cjson
       run: |
+        git clone https://github.com/openresty/lua-cjson.git
         cd lua-cjson
         make
         sudo PATH=$PATH make install
