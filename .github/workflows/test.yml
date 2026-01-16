@@ -1,0 +1,109 @@
+name: Test
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  test:
+    runs-on: ubuntu-20.04
+
+    env:
+      JOBS: 3
+      NGX_BUILD_JOBS: 3
+      LUAJIT_PREFIX: /opt/luajit21
+      LUAJIT_LIB: /opt/luajit21/lib
+      LUAJIT_INC: /opt/luajit21/include/luajit-2.1
+      LUA_INCLUDE_DIR: /opt/luajit21/include/luajit-2.1
+      OPENSSL_PREFIX: /opt/ssl
+      OPENSSL_LIB: /opt/ssl/lib
+      OPENSSL_INC: /opt/ssl/include
+      OPENSSL_VER: 1.1.1f
+      LD_LIBRARY_PATH: /opt/luajit21/lib
+      TEST_NGINX_SLEEP: 0.006
+      LUACHECK_VER: 0.21.1
+      NGINX_VERSION: 1.19.9
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Setup cache for downloads
+      uses: actions/cache@v3
+      with:
+        path: download-cache
+        key: ${{ runner.os }}-openssl-${{ env.OPENSSL_VER }}
+
+    - name: Install system dependencies
+      run: |
+        # Add Redis PPA and install Redis
+        sudo add-apt-repository -y ppa:redislabs/redis
+        sudo apt-get update
+        sudo apt-get install -y redis-server luarocks lsof cpanminus axel
+
+    - name: Install Lua dependencies
+      run: |
+        sudo luarocks install luacov
+        sudo luarocks install lua-resty-redis
+        sudo luarocks install luacheck ${{ env.LUACHECK_VER }}
+
+    - name: Run luacheck
+      run: luacheck -q .
+
+    - name: Install Test::Nginx
+      run: |
+        sudo cpanm --notest Test::Nginx > build.log 2>&1 || (cat build.log && exit 1)
+
+    - name: Clone dependencies
+      run: |
+        git clone https://github.com/openresty/openresty.git ../openresty
+        git clone https://github.com/openresty/nginx-devel-utils.git
+        git clone https://github.com/openresty/lua-cjson.git
+        git clone https://github.com/openresty/lua-nginx-module.git ../lua-nginx-module
+        git clone https://github.com/openresty/stream-lua-nginx-module.git ../stream-lua-nginx-module
+        git clone https://github.com/openresty/lua-resty-core.git ../lua-resty-core
+        git clone https://github.com/openresty/lua-resty-lrucache.git ../lua-resty-lrucache
+        git clone https://github.com/openresty/echo-nginx-module.git ../echo-nginx-module
+        git clone https://github.com/openresty/no-pool-nginx.git ../no-pool-nginx
+        git clone -b v2.1-agentzh https://github.com/openresty/luajit2.git
+
+    - name: Build LuaJIT
+      run: |
+        cd luajit2/
+        make -j$JOBS CCDEBUG=-g Q= PREFIX=$LUAJIT_PREFIX CC=gcc XCFLAGS='-DLUA_USE_APICHECK -DLUA_USE_ASSERT' > build.log 2>&1 || (cat build.log && exit 1)
+        sudo make install PREFIX=$LUAJIT_PREFIX > build.log 2>&1 || (cat build.log && exit 1)
+
+    - name: Build lua-cjson
+      run: |
+        cd lua-cjson
+        make
+        sudo PATH=$PATH make install
+
+    - name: Build OpenSSL
+      run: |
+        mkdir -p download-cache
+        if [ ! -f download-cache/openssl-$OPENSSL_VER.tar.gz ]; then
+          wget -O download-cache/openssl-$OPENSSL_VER.tar.gz https://www.openssl.org/source/openssl-$OPENSSL_VER.tar.gz
+        fi
+        tar zxf download-cache/openssl-$OPENSSL_VER.tar.gz
+        cd openssl-$OPENSSL_VER/
+        ./config shared --prefix=$OPENSSL_PREFIX -DPURIFY > build.log 2>&1 || (cat build.log && exit 1)
+        make -j$JOBS > build.log 2>&1 || (cat build.log && exit 1)
+        sudo make PATH=$PATH install_sw > build.log 2>&1 || (cat build.log && exit 1)
+
+    - name: Build NGINX
+      run: |
+        export PATH=$PWD/work/nginx/sbin:$PWD/nginx-devel-utils:$PATH
+        export NGX_BUILD_CC=gcc
+        ngx-build $NGINX_VERSION --with-ipv6 --with-http_realip_module --with-http_ssl_module --with-cc-opt="-I$OPENSSL_INC" --with-ld-opt="-L$OPENSSL_LIB -Wl,-rpath,$OPENSSL_LIB" --add-module=../echo-nginx-module --add-module=../lua-nginx-module --add-module=../stream-lua-nginx-module --with-stream --with-stream_ssl_module --with-debug > build.log 2>&1 || (cat build.log && exit 1)
+        nginx -V
+        ldd `which nginx`|grep -E 'luajit|ssl|pcre'
+
+    - name: Setup iptables rule
+      run: sudo iptables -A OUTPUT -p tcp --dst 127.0.0.2 --dport 12345 -j DROP
+
+    - name: Run tests
+      run: |
+        mkdir -p tmp
+        TMP_DIR=$PWD/tmp make test_all
