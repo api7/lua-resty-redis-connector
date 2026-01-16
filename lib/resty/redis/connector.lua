@@ -299,8 +299,6 @@ function _M.connect_via_sentinel(self, params)
     local db = params.db
     local username = params.username
     local password = params.password
-<<<<<<< Updated upstream
-
     local sentinels = tbl_new(#params.sentinels, 0)
     for i, sentinel in ipairs(params.sentinels) do
         local host = tbl_clone(sentinel)
@@ -308,17 +306,6 @@ function _M.connect_via_sentinel(self, params)
         host.username = host.username or params.sentinel_username
         host.password = host.password or params.sentinel_password
         sentinels[i] = host
-=======
-    local sentinel_username = params.sentinel_username
-    local sentinel_password = params.sentinel_password
-    local cache_ttl = self.config.sentinel_cache_ttl
-
-    if sentinel_password then
-        for _, host in ipairs(sentinels) do
-            host.username = sentinel_username
-            host.password = sentinel_password
-        end
->>>>>>> Stashed changes
     end
 
     local cache_key = build_cache_key(master_name, sentinels)
