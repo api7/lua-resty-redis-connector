@@ -299,6 +299,7 @@ function _M.connect_via_sentinel(self, params)
     local db = params.db
     local username = params.username
     local password = params.password
+
     local sentinels = tbl_new(#params.sentinels, 0)
     for i, sentinel in ipairs(params.sentinels) do
         local host = tbl_clone(sentinel)
