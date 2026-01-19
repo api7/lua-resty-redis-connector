@@ -3,6 +3,7 @@ local ipairs, pairs, pcall, error, tostring, type, next, setmetatable, getmetata
 
 local ngx_log = ngx.log
 local ngx_ERR = ngx.ERR
+local ngx_INFO = ngx.INFO
 local ngx_re_match = ngx.re.match
 local null = ngx.null
 
@@ -313,6 +314,7 @@ function _M.connect_via_sentinel(self, params)
     if role == "master" then
         local cached = master_cache:get(cache_key)
         if cached and cached.host then
+            ngx_log(ngx_INFO, "using cached master connection")
             cached.db = db
             cached.username = username
             cached.password = password
