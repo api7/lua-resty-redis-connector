@@ -3,6 +3,7 @@ local ipairs, pairs, pcall, error, tostring, type, next, setmetatable, getmetata
 
 local ngx_log = ngx.log
 local ngx_ERR = ngx.ERR
+local ngx_INFO = ngx.INFO
 local ngx_re_match = ngx.re.match
 local null = ngx.null
 
@@ -38,6 +39,9 @@ redis.add_commands("sentinel")
 
 local get_master = require("resty.redis.sentinel").get_master
 local get_slaves = require("resty.redis.sentinel").get_slaves
+
+local lrucache = require "resty.lrucache"
+local master_cache = lrucache.new(1024)
 
 
 -- A metatable which prevents undefined fields from being created / accessed
@@ -105,6 +109,22 @@ local function tbl_copy_merge_defaults(t1, defaults)
 end
 
 
+local function build_cache_key(master_name, sentinels)
+    local sorted = tbl_copy(sentinels)
+    table.sort(sorted, function(a, b)
+        return (a.host .. a.port) < (b.host .. b.port)
+    end)
+
+    local sentinel_parts = {}
+    for i, s in ipairs(sorted) do
+        sentinel_parts[i] = s.host .. ":" .. s.port
+    end
+
+    local sentinel_str = table.concat(sentinel_parts, "|")
+    return master_name .. ":" .. sentinel_str
+end
+
+
 local DEFAULTS = setmetatable({
     connect_timeout = 100,
     read_timeout = 1000,
@@ -126,6 +146,8 @@ local DEFAULTS = setmetatable({
     master_name = "mymaster",
     role = "master",  -- master | slave
     sentinels = {},
+
+    sentinel_cache_ttl = 10,
 
     -- Redis proxies typically don't support full Redis capabilities
     connection_is_proxied = false,
@@ -287,6 +309,26 @@ function _M.connect_via_sentinel(self, params)
         sentinels[i] = host
     end
 
+    local cache_key = build_cache_key(master_name, sentinels)
+
+    if role == "master" then
+        local cached = master_cache:get(cache_key)
+        if cached and cached.host then
+            ngx_log(ngx_INFO, "using cached master connection")
+            cached.db = db
+            cached.username = username
+            cached.password = password
+
+            local redis, err = self:connect_to_host(cached)
+            if redis then
+                return redis
+            else
+                ngx_log(ngx_ERR, "cached master connection failed: ", err, ", querying sentinel")
+                master_cache:delete(cache_key)
+            end
+        end
+    end
+
     local sentnl, err, previous_errors = self:try_hosts(sentinels)
     if not sentnl then
         return nil, err, previous_errors
@@ -297,6 +339,11 @@ function _M.connect_via_sentinel(self, params)
         if not master then
             return nil, err
         end
+
+        master_cache:set(cache_key, {
+            host = master.host,
+            port = master.port,
+        }, params.sentinel_cache_ttl)
 
         sentnl:set_keepalive()
 
