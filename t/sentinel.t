@@ -240,8 +240,6 @@ location /t {
 GET /t
 --- no_error_log
 [error]
---- error_log
-using cached master connection
 
 
 === TEST 6: regression for slave sorting (iss12)
