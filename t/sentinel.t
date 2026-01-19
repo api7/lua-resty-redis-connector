@@ -306,3 +306,35 @@ location /t {
 GET /t
 --- no_error_log
 [error]
+
+
+=== TEST 6: cache master connection
+--- http_config eval: $::HttpConfig
+--- config
+location /t {
+    content_by_lua_block {
+        local rc = require("resty.redis.connector").new()
+
+        local params = {
+            sentinels = {
+                { host = "127.0.0.1", port = $TEST_NGINX_SENTINEL_PORT1 },
+                { host = "127.0.0.1", port = $TEST_NGINX_SENTINEL_PORT2 },
+                { host = "127.0.0.1", port = $TEST_NGINX_SENTINEL_PORT3 },
+            },
+            master_name = "mymaster",
+            role = "master",
+        }
+
+        local redis, err = rc:connect_via_sentinel(params)
+        assert(redis and not err, "redis should connect without error")
+
+        local redis, err = rc:connect_via_sentinel(params)
+        assert(redis and not err, "redis should connect without error")
+    }
+}
+--- request
+GET /t
+--- no_error_log
+[error]
+--- error_log
+using cached master connection
