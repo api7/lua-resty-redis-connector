@@ -170,7 +170,7 @@ local default_disabled_commands = {
 
 
 local _M = {
-    _VERSION = '0.11.0',
+    _VERSION = '0.12.0',
 }
 
 local mt = { __index = _M }
