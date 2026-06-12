@@ -6,6 +6,7 @@ local ngx_ERR = ngx.ERR
 local ngx_INFO = ngx.INFO
 local ngx_re_match = ngx.re.match
 local null = ngx.null
+local crc32 = ngx.crc32_long
 
 local str_find = string.find
 local str_sub = string.sub
@@ -405,6 +406,42 @@ function _M.try_hosts(self, hosts)
 end
 
 
+-- AUTH and SELECT are skipped on connections reused from the keepalive pool,
+-- so connections established with different databases or credentials must not
+-- share the default host:port pool, otherwise a reused connection may be
+-- bound to an unexpected database or user. Build a pool name that reflects
+-- everything the connection got bound to at handshake time, unless the
+-- caller picked a pool explicitly.
+local function build_default_pool_name(host, opts)
+    local pool
+    local path = host.path
+    if path and path ~= "" then
+        pool = path
+    else
+        pool = host.host .. ":" .. host.port
+    end
+
+    local db = host.db
+    if db == nil or db == null then
+        db = ""
+    end
+    pool = pool .. "#" .. db
+
+    local password = host.password
+    if password and password ~= "" then
+        -- a digest instead of the plaintext credentials in the pool name
+        pool = pool .. "#" .. crc32((host.username or "") .. ":" .. password)
+    end
+
+    -- the TLS handshake is also skipped on reused connections
+    if opts.ssl or opts.ssl_verify then
+        pool = pool .. "#" .. tostring(opts.ssl) .. ":" .. tostring(opts.ssl_verify)
+    end
+
+    return pool
+end
+
+
 function _M.connect_to_host(self, host)
     local r = redis.new()
 
@@ -433,21 +470,24 @@ function _M.connect_to_host(self, host)
         end
     end
 
+    -- copy into a plain table: config tables may carry the fixed field
+    -- metatable, which forbids adding the pool field
+    local opts = {}
+    if config.connection_options then
+        for k, v in pairs(config.connection_options) do
+            opts[k] = v
+        end
+    end
+    if not opts.pool then
+        opts.pool = build_default_pool_name(host, opts)
+    end
+
     local ok, err
     local path = host.path
-    local opts = config.connection_options
     if path and path ~= "" then
-        if opts then
-            ok, err = r:connect(path, config.connection_options)
-        else
-            ok, err = r:connect(path)
-        end
+        ok, err = r:connect(path, opts)
     else
-        if opts then
-            ok, err = r:connect(host.host, host.port, config.connection_options)
-        else
-            ok, err = r:connect(host.host, host.port)
-        end
+        ok, err = r:connect(host.host, host.port, opts)
     end
 
     if not ok then
