@@ -440,3 +440,66 @@ location /t {
 GET /t
 --- no_error_log
 [error]
+
+=== TEST 13: connections with different db must not share the keepalive pool
+--- http_config eval: $::HttpConfig
+--- config
+location /t {
+    content_by_lua_block {
+        local rc = require("resty.redis.connector").new({
+            port = $TEST_NGINX_REDIS_PORT,
+        })
+
+        -- bind a pooled connection to db 1
+        local redis = assert(rc:connect({ db = 1 }))
+        assert(redis:set("pool_isolation", "db1"))
+        assert(rc:set_keepalive(redis))
+
+        -- a connection for db 2 must not reuse it
+        local redis2 = assert(rc:connect({ db = 2 }))
+        assert(redis2:get_reused_times() == 0,
+            "db 2 must not reuse the db 1 connection")
+        local res = redis2:get("pool_isolation")
+        assert(res == ngx.null,
+            "db 2 must not see db 1 keys, got: " .. tostring(res))
+        assert(rc:set_keepalive(redis2))
+
+        -- the same config keeps reusing its own pooled connection
+        local redis3 = assert(rc:connect({ db = 1 }))
+        assert(redis3:get_reused_times() > 0,
+            "db 1 should reuse its own pooled connection")
+        assert(redis3:get("pool_isolation") == "db1",
+            "the reused connection must still be bound to db 1")
+        redis3:del("pool_isolation")
+        redis3:close()
+    }
+}
+--- request
+GET /t
+--- no_error_log
+[error]
+
+=== TEST 14: an explicit pool name is used as-is
+--- http_config eval: $::HttpConfig
+--- config
+location /t {
+    content_by_lua_block {
+        local rc = require("resty.redis.connector").new({
+            port = $TEST_NGINX_REDIS_PORT,
+            connection_options = { pool = "my_explicit_pool" },
+        })
+
+        local redis = assert(rc:connect({ db = 1 }))
+        assert(rc:set_keepalive(redis))
+
+        -- with an explicit pool the caller opts out of the isolation
+        local redis2 = assert(rc:connect({ db = 2 }))
+        assert(redis2:get_reused_times() > 0,
+            "an explicit pool name must keep the old sharing behavior")
+        redis2:close()
+    }
+}
+--- request
+GET /t
+--- no_error_log
+[error]
